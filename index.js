@@ -1,7 +1,6 @@
-// Minimal API for Render (fixed version)
-const express = require("express");
-const cors = require("cors");
-const fetch = require("node-fetch");
+import express from "express";
+import cors from "cors";
+import fetch from "node-fetch";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -13,18 +12,14 @@ app.use(cors({
   credentials: false,
 }));
 
-// فحص السيرفر
 app.get("/health", (req, res) => {
   res.json({ ok: true, status: "server running" });
 });
 
-// نقطة الذكاء الصناعي
 app.post("/ask", async (req, res) => {
   const { prompt } = req.body;
 
-  if (!prompt) {
-    return res.status(400).json({ error: "Prompt required" });
-  }
+  if (!prompt) return res.status(400).json({ error: "Prompt required" });
 
   try {
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
