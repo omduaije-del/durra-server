@@ -1,46 +1,40 @@
-// Minimal safe API for Render
-const express = require('express');
-const cors = require('cors');
+// Minimal API for Durra — CommonJS style
+const express = require("express");
+const cors = require("cors");
 
 const app = express();
-app.use(cors());
-app.use(express.json());
-
 const PORT = process.env.PORT || 3000;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-// اختبار السيرفر
-app.get('/', (req, res) => {
-  res.json({ ok: true, status: 'server running' });
+// فحص الصحة
+app.get("/health", (req, res) => {
+  res.json({ ok: true, status: "server running" });
 });
 
-// مثال على نداء API (لو بتحتاجي تستخدم الـ fetch)
-app.post('/ask', async (req, res) => {
-  const { prompt } = req.body;
+// ميدلوير
+app.use(express.json({ limit: "1mb" }));
+app.use(cors({
+  origin: "*",      // مسموح من كل الدومينات (بسيط)
+  credentials: false
+}));
 
+// نقطة الاستقبال /ask (تجريبي الآن)
+app.post("/ask", async (req, res) => {
   try {
-    // نستخدم fetch المدمج في Node.js
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OPENAI_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [{ role: 'user', content: prompt }],
-      }),
-    });
+    const { question } = req.body || {};
+    if (!question || !String(question).trim()) {
+      return res.status(400).json({ error: "رجاءً أدخلي سؤال" });
+    }
 
-    const data = await response.json();
-    res.json({ reply: data.choices?.[0]?.message?.content || 'No response' });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Error fetching response from OpenAI API' });
+    // حالياً نرجّع رد تجريبي فوري — فقط للتأكد أن الواجهة تتصل بالسيرفر
+    const answer = `إجابة تجريبية ✅: "${question}"`;
+    return res.json({ answer });
+  } catch (err) {
+    console.error("ASK_ERROR:", err);
+    res.status(500).json({ error: "حدث خطأ في السيرفر" });
   }
 });
 
-// تشغيل السيرفر
+// تشغيل
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`Server is running on port: ${PORT}`);
 });
