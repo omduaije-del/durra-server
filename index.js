@@ -1,19 +1,41 @@
-import express from "express";
-import cors from "cors";
-import fetch from "node-fetch";
+const express = require("express");
+const cors = require("cors");
 
+// Node 20+ فيه fetch جاهز (Render يستخدم نسخة حديثة)
 const app = express();
-app.use(express.json());
-app.use(cors({ origin: ["https://durra-math.onrender.com", "http://localhost:5173"] }));
+const PORT = process.env.PORT || 3000;
 
+app.use(express.json());
+
+// CORS متسامح لموقعك
+app.use(cors({
+  origin: true,
+  credentials: false
+}));
+
+// صفحة رئيسية بسيطة
 app.get("/", (req, res) => {
   res.send("durra-server is running.");
 });
 
-app.post("/api/ask", async (req, res) => {
+// فحص الصحة
+app.get("/health", (req, res) => {
+  res.json({ ok: true, status: "server running" });
+});
+
+// المعالج العام للأسئلة (يدعم GET وPOST وأسماء حقول مختلفة)
+const askHandler = async (req, res) => {
   try {
-    const { question } = req.body;
-    if (!question) return res.status(400).json({ error: "No question" });
+    const body = req.body || {};
+    const question =
+      body.question ||
+      body.q ||
+      req.query?.q ||
+      req.query?.question;
+
+    if (!question) {
+      return res.status(400).json({ ok: false, error: "No question provided" });
+    }
 
     const r = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -26,24 +48,47 @@ app.post("/api/ask", async (req, res) => {
         input: `أجب بإيجاز وبالعربية فقط: ${question}`
       })
     });
+
     const data = await r.json();
+
+    // نحاول استخراج النص من صيغ متعددة
     let text = "";
-    if (data?.output && Array.isArray(data.output)) {
-      // Responses API format
+    if (Array.isArray(data?.output)) {
       const first = data.output[0];
-      if (first?.content && Array.isArray(first.content) && first.content[0]?.text) {
+      if (Array.isArray(first?.content) && first.content[0]?.text) {
         text = first.content[0].text;
       }
     }
-    if (!text && data?.choices && data.choices[0]?.message?.content) {
-      // Chat Completions fallback (if API returns in another structure)
+    if (!text && data?.choices?.[0]?.message?.content) {
       text = data.choices[0].message.content;
     }
-    res.json({ answer: text || "لم أتمكّن من توليد إجابة الآن." });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+    if (!text) text = "لم أتمكن من توليد إجابة الآن.";
 
-const port = process.env.PORT || 3000;
-app.listen(port, () => console.log("durra-server running on " + port));
+    // نعيد مفاتيح متعددة عشان أي واجهة تفهم
+    return res.json({
+      ok: true,
+      answer: text,
+      message: text,
+      content: text,
+      text,
+      result: text,
+      data: { text }
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
+  }
+};
+
+// مسارات POST
+app.post("/api/ask", askHandler);
+app.post("/ask", askHandler);
+app.post("/v1/ask", askHandler);
+
+// ومسارات GET أيضاً
+app.get("/api/ask", askHandler);
+app.get("/ask", askHandler);
+app.get("/v1/ask", askHandler);
+
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
