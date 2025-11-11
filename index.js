@@ -1,20 +1,23 @@
 // =======================
-// دُرّى — خادم مبسّط لإجابات رياضيات عربية مرتّبة
+// دُرّى — خادم مبسّط لإجابات رياضيات عربية مرتّبة (CommonJS)
 // =======================
 
-import express from "express";
-import cors from "cors";
-import fetch from "node-fetch";
+const express = require("express");
+const cors = require("cors");
+
+// نستخدم fetch العالمي لو موجود، أو نحمل node-fetch ديناميكياً
+let fetchFn = global.fetch;
+if (!fetchFn) {
+  fetchFn = (...args) =>
+    import("node-fetch").then(({ default: fetch }) => fetch(...args));
+}
+const fetch = (...args) => fetchFn(...args);
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
 
-// إعدادات عامة
-app.use(cors());
-app.use(express.json());
-
-// مضبوطة للرياضيات بالعربي فقط
+// ===== برومبت دُرّى =====
 const SYSTEM_PROMPT = `
 أنت "دُرّى معلمة الرياضيات الذكية".
 الطالبات من الكويت، لغتهن العربية، ومستواهن من المتوسط إلى الثانوية.
@@ -49,7 +52,7 @@ const SYSTEM_PROMPT = `
    - إذا كان السؤال ناقصًا أو غير واضح، اطلبي توضيحًا بدل اختراع بيانات.
 `;
 
-// دالة تنظّف النص من أي رموز/أكواد غريبة قبل إرسالها للواجهة
+// ===== تنظيف الإجابة من الرموز الغريبة =====
 function cleanAnswer(text = "") {
   let t = String(text);
 
@@ -69,17 +72,17 @@ function cleanAnswer(text = "") {
     .replace(/`/g, "")         // باك تِك
     .replace(/_/g, " ");
 
-  // أحيانًا يكتب س × س على شكل x س أو س x، نرتّب ضرب بسيط
+  // ترتيب بسيط لبعض أنماط الضرب
   t = t.replace(/x\s*([0-9س])/g, "× $1");
 
-  // تقليل المسافات والأسطر الفارغة المكررة
+  // تقليل المسافات والأسطر الفارغة
   t = t.replace(/[ \t]+/g, " ");
   t = t.replace(/\n{3,}/g, "\n\n");
 
   return t.trim();
 }
 
-// دالة عامة تطلب من نموذج الذكاء الاصطناعي
+// ===== دالة الطلب من نموذج الذكاء =====
 async function askDurra(question) {
   if (!OPENAI_KEY) {
     throw new Error("مفتاح OPENAI_API_KEY غير موجود في إعدادات الخادم.");
@@ -112,25 +115,31 @@ async function askDurra(question) {
 
   const data = await res.json();
   const raw =
-    data?.choices?.[0]?.message?.content ||
-    "عذراً، لم أستطع توليد إجابة مناسبة.";
+    data &&
+    data.choices &&
+    data.choices[0] &&
+    data.choices[0].message &&
+    data.choices[0].message.content
+      ? data.choices[0].message.content
+      : "عذراً، لم أستطع توليد إجابة مناسبة.";
 
   return cleanAnswer(raw);
 }
 
-// =======================
-// المسارات (Routes)
-// =======================
+// ===== إعدادات Express =====
+app.use(cors());
+app.use(express.json());
 
 // فحص الصحة
 app.get("/health", (_req, res) => {
   res.json({ ok: true, status: "healthy", service: "durra-server" });
 });
 
-// الواجهة الأساسية التي يستخدمها front-end: /api/chat
+// المسار الأساسي الذي يستخدمه الفرونت
 app.post("/api/chat", async (req, res) => {
   try {
-    const message = (req.body?.message || "").toString().trim();
+    const message =
+      (req.body && req.body.message ? String(req.body.message) : "").trim();
 
     if (!message) {
       return res.status(400).json({
@@ -139,26 +148,21 @@ app.post("/api/chat", async (req, res) => {
     }
 
     const answer = await askDurra(message);
-
-    res.json({
-      answer,
-      reply: answer   // عشان لو الواجهة تبحث عن reply بدل answer
-    });
+    res.json({ answer, reply: answer });
   } catch (err) {
     console.error("API_CHAT_ERROR:", err);
-
-    // ما نرسل تفاصيل تقنية للمستخدمة
-    return res.status(500).json({
+    res.status(500).json({
       error:
         "عذراً، حصل خلل مؤقت في الخادم أثناء توليد الإجابة. حاولي مرة أخرى بعد قليل."
     });
   }
 });
 
-// مسار /ask القديم (للتوافق مع الكود السابق)
+// مسار /ask القديم للتوافق
 app.post("/ask", async (req, res) => {
   try {
-    const question = (req.body?.question || "").toString().trim();
+    const question =
+      (req.body && req.body.question ? String(req.body.question) : "").trim();
 
     if (!question) {
       return res.status(400).json({
@@ -167,14 +171,10 @@ app.post("/ask", async (req, res) => {
     }
 
     const answer = await askDurra(question);
-
-    res.json({
-      answer,
-      reply: answer
-    });
+    res.json({ answer, reply: answer });
   } catch (err) {
     console.error("ASK_ERROR:", err);
-    return res.status(500).json({
+    res.status(500).json({
       error:
         "عذراً، حصل خلل مؤقت في الخادم أثناء توليد الإجابة. حاولي مرة أخرى بعد قليل."
     });
