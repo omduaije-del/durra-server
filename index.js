@@ -1,187 +1,114 @@
-// =======================
-// دُرّى — خادم مبسّط لإجابات رياضيات عربية مرتّبة (CommonJS)
-// =======================
+// Durra Server — معلمة رياضيات عربية نظيفة ومركّزة
 
 const express = require("express");
 const cors = require("cors");
 
-// نستخدم fetch العالمي لو موجود، أو نحمل node-fetch ديناميكياً
-let fetchFn = global.fetch;
-if (!fetchFn) {
-  fetchFn = (...args) =>
-    import("node-fetch").then(({ default: fetch }) => fetch(...args));
-}
-const fetch = (...args) => fetchFn(...args);
-
 const app = express();
-const PORT = process.env.PORT || 10000;
-const OPENAI_KEY = process.env.OPENAI_API_KEY;
+const PORT = process.env.PORT || 3000;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-// ===== برومبت دُرّى =====
-const SYSTEM_PROMPT = `
-أنت "دُرّى معلمة الرياضيات الذكية".
-الطالبات من الكويت، لغتهن العربية، ومستواهن من المتوسط إلى الثانوية.
+// middlewares
+app.use(express.json({ limit: "2mb" }));
+app.use(cors({ origin: "*", credentials: false }));
 
-القواعد:
-
-1. أجيبي فقط عن **الرياضيات** (حساب، جبر، كسور، متباينات، هندسة، إحصاء، ...).
-   - إذا كان السؤال غير رياضي → اعتذري بلطف وقولي: "أستطيع مساعدتك في الرياضيات فقط 💛".
-2. اللغة:
-   - استخدمي العربية الفصحى المبسطة.
-   - يمكن استخدام كلمات دارجة خفيفة لو احتاج الشرح (مثل: "نرتّب الحدود"، "نوزّع الضرب").
-   - المتغيّر اكتبيه "س" بدلًا من x عندما يكون مناسبًا.
-3. التنسيق:
-   - اكتبي الحل على شكل خطوات مرقمة:
-     1. ...
-     2. ...
-     3. ...
-   - استخدمي سطر جديد لكل خطوة.
-   - لا تكتبي LaTeX أو أكواد برمجية أو Markdown.
-   - **ممنوع** استخدام هذه الرموز أو الكلمات:
-     \\\\, \\\( \\\), \\[ \\], \\frac, \\cdot, \\sqrt, rightarrow, div, times, pm.
-4. العمليات والرموز:
-   - استخدمي الرمز "×" لعملية الضرب، و"÷" للقسمة عند الحاجة.
-   - الكسور اكتبيها بالشكل:  ٣/٤  أو  5/2  (بخط واحد، بدون كسر عمودي معقد).
-   - القوى اكتبيها بالكلمة إن لزم:  س² → "س تربيع"، س³ → "س تكعيب".
-5. الشكل النهائي:
-   - أعطي النتيجة النهائية في سطر مستقل في آخر الإجابة، مثل:
-     "إذن الناتج النهائي هو: س = ٤."
-   - تجنبي التكرار أو الشرح الزائد عن الحد.
-6. الدقّة:
-   - تحققي من صحة العمليات الحسابية.
-   - إذا كان السؤال ناقصًا أو غير واضح، اطلبي توضيحًا بدل اختراع بيانات.
-`;
-
-// ===== تنظيف الإجابة من الرموز الغريبة =====
-function cleanAnswer(text = "") {
-  let t = String(text);
-
-  // إزالة أي كود داخل ``` ```
-  t = t.replace(/```[\s\S]*?```/g, "");
-
-  // إزالة بقايا أوامر LaTeX/Markdown الشائعة
-  t = t
-    .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, "$1 / $2")
-    .replace(/\\cdot/g, " × ")
-    .replace(/\\times/g, " × ")
-    .replace(/\\sqrt/g, " جذر ")
-    .replace(/\\left|\\right/g, "")
-    .replace(/\\\(|\\\)|\\\[|\\\]/g, "")
-    .replace(/rightarrow|div/g, "")
-    .replace(/\*\*/g, "")      // نجوم التحديد
-    .replace(/`/g, "")         // باك تِك
-    .replace(/_/g, " ");
-
-  // ترتيب بسيط لبعض أنماط الضرب
-  t = t.replace(/x\s*([0-9س])/g, "× $1");
-
-  // تقليل المسافات والأسطر الفارغة
-  t = t.replace(/[ \t]+/g, " ");
-  t = t.replace(/\n{3,}/g, "\n\n");
-
-  return t.trim();
-}
-
-// ===== دالة الطلب من نموذج الذكاء =====
-async function askDurra(question) {
-  if (!OPENAI_KEY) {
-    throw new Error("مفتاح OPENAI_API_KEY غير موجود في إعدادات الخادم.");
-  }
-
-  const body = {
-    model: "gpt-4o-mini",
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: question }
-    ],
-    temperature: 0.3,
-    max_tokens: 900
-  };
-
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${OPENAI_KEY}`
-    },
-    body: JSON.stringify(body)
-  });
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    console.error("OpenAI error:", res.status, errText);
-    throw new Error("OPENAI_REQUEST_FAILED");
-  }
-
-  const data = await res.json();
-  const raw =
-    data &&
-    data.choices &&
-    data.choices[0] &&
-    data.choices[0].message &&
-    data.choices[0].message.content
-      ? data.choices[0].message.content
-      : "عذراً، لم أستطع توليد إجابة مناسبة.";
-
-  return cleanAnswer(raw);
-}
-
-// ===== إعدادات Express =====
-app.use(cors());
-app.use(express.json());
-
-// فحص الصحة
+// health check
 app.get("/health", (_req, res) => {
   res.json({ ok: true, status: "healthy", service: "durra-server" });
 });
 
-// المسار الأساسي الذي يستخدمه الفرونت
-app.post("/api/chat", async (req, res) => {
+// دالة تساعدنا نقرأ body من OpenAI لو فيه خطأ
+async function readJsonSafe(resp) {
   try {
-    const message =
-      (req.body && req.body.message ? String(req.body.message) : "").trim();
-
-    if (!message) {
-      return res.status(400).json({
-        error: "يرجى إرسال سؤال رياضي في الحقل 'message'."
-      });
-    }
-
-    const answer = await askDurra(message);
-    res.json({ answer, reply: answer });
-  } catch (err) {
-    console.error("API_CHAT_ERROR:", err);
-    res.status(500).json({
-      error:
-        "عذراً، حصل خلل مؤقت في الخادم أثناء توليد الإجابة. حاولي مرة أخرى بعد قليل."
-    });
+    return await resp.json();
+  } catch {
+    return null;
   }
-});
+}
 
-// مسار /ask القديم للتوافق
+// مسار السؤال الرئيسي: /ask
 app.post("/ask", async (req, res) => {
   try {
-    const question =
-      (req.body && req.body.question ? String(req.body.question) : "").trim();
+    const question = (req.body?.question || "").trim();
 
     if (!question) {
-      return res.status(400).json({
-        error: "يرجى إرسال سؤال رياضي في الحقل 'question'."
-      });
+      return res
+        .status(400)
+        .json({ error: "رجاءً اكتبي سؤالًا رياضيًا أولًا." });
     }
 
-    const answer = await askDurra(question);
-    res.json({ answer, reply: answer });
+    if (!OPENAI_API_KEY) {
+      return res
+        .status(500)
+        .json({ error: "مفقود OPENAI_API_KEY على السيرفر. تواصلي مع المطوّرة." });
+    }
+
+    const apiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        temperature: 0.2, // دقة أعلى – أقل عشوائية
+        max_tokens: 900,
+        messages: [
+          {
+            role: "system",
+            content:
+              [
+                "أنت معلمة رياضيات عربية دقيقة جدًا لطلاب المرحلة المتوسطة والثانوية.",
+                "أجيبي دائمًا بالعربية الفصحى المبسطة.",
+                "اكتبي الخطوات مرقّمة أو على شكل نقاط واضحة.",
+                "استخدمي الرموز الرياضية البسيطة فقط: + ، − ، × ، ÷ ، = ، < ، > ، ≤ ، ≥ ، ( ، ).",
+                "تجنبي تمامًا كتابة أوامر LaTeX مثل: \\frac, \\sqrt, \\cdot, \\times, \\div, \\rightarrow, ^{ }, _{ } وغير ذلك.",
+                "إذا احتجتِ لكسر اكتبيه هكذا: 3/4 وليس \\frac{3}{4}.",
+                "إذا ظهر متغيّر x في السؤال فاستعمليه كما هو، ولا تغيّريه إلى س أو غيره.",
+                "استخدمي أرقامًا عادية (1, 2, 3) وليس الأرقام الهندية (١،٢،٣) لتسهيل القراءة على المنصّة.",
+                "إذا كان السؤال غير رياضي (تاريخ، تربية إسلامية، إلخ) فجاوبي بجملة قصيرة: (أنا مختصّة بالرياضيات فقط).",
+              ].join(" "),
+          },
+          { role: "user", content: question },
+        ],
+      }),
+    });
+
+    const data = await readJsonSafe(apiRes);
+
+    if (!apiRes.ok) {
+      // نفهم نوع الخطأ (مثلاً limit أو غيره) ونرجع رسالة ألطف
+      const code = data?.error?.code || apiRes.status;
+      let msg =
+        data?.error?.message ||
+        "تعذّر الحصول على إجابة من النموذج. حاولي مرة أخرى بعد قليل.";
+
+      if (code === "rate_limit_exceeded" || apiRes.status === 429) {
+        msg =
+          "الخادم قال: تم الوصول للحد المسموح من استخدام النموذج مؤقتًا. انتظري دقيقة ثم حاولي مرة أخرى.";
+      }
+
+      return res.status(502).json({ error: msg });
+    }
+
+    const answer =
+      data?.choices?.[0]?.message?.content?.trim() ||
+      "لم أستطع توليد إجابة مناسبة.";
+
+    return res.json({ answer });
   } catch (err) {
     console.error("ASK_ERROR:", err);
-    res.status(500).json({
-      error:
-        "عذراً، حصل خلل مؤقت في الخادم أثناء توليد الإجابة. حاولي مرة أخرى بعد قليل."
+    return res.status(500).json({
+      error: "عذرًا، حصل خطأ غير متوقّع في الخادم أثناء توليد الإجابة.",
     });
   }
 });
 
-// تشغيل الخادم
+// مسار GET اختياري للتجربة اليدوية من المتصفح
+app.get("/ask", (_req, res) => {
+  res.json({ msg: "أرسلي طلب POST إلى /ask مع { question: '...' }" });
+});
+
+// تشغيل السيرفر
 app.listen(PORT, () => {
-  console.log(`Durra server listening on port ${PORT}`);
+  console.log(`Durra server running on port ${PORT}`);
 });
